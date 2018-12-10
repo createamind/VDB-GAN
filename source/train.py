@@ -54,11 +54,11 @@ def parse_arguments():
                         help="path for saved models directory")
 
     parser.add_argument("--loss_function", action="store", type=str,
-                        default="gan-qp",
+                        default="wgan-div",
                         help="loss function to be used: " +
                              "'hinge', 'relativistic-hinge'," +
                              " 'standard-gan', 'standard-gan_with-sigmoid'," +
-                             " 'wgan-gp', 'lsgan', 'gan-qp'")
+                             " 'wgan-gp', 'lsgan', 'gan-qp', 'wgan-div'")
 
     parser.add_argument("--size", action="store", type=int,
                         default=128,
@@ -148,7 +148,7 @@ def main(args):
     from data_processing.DataLoader import FlatDirectoryImageDataset, \
         get_transform, get_data_loader, FoldersDistributedDataset
     from vdb.Losses import WGAN_GP, HingeGAN, RelativisticAverageHingeGAN, \
-        StandardGAN, LSGAN, StandardGANWithSigmoid, GAN_QP
+        StandardGAN, LSGAN, StandardGANWithSigmoid, GAN_QP, WGAN_div
 
     # create a data source:
     if args.folder_distributed_dataset:
@@ -221,6 +221,8 @@ def main(args):
         loss = LSGAN
     elif loss_name == "gan-qp":
         loss = GAN_QP
+    elif loss_name == "wgan-div":
+        loss = WGAN_div
     else:
         raise Exception("Unknown loss function requested")
 
@@ -251,10 +253,11 @@ if __name__ == '__main__':
     args = parse_arguments()
 
     args.batch_size = 32  # can be used to decrease the demand for memory in order to debug
-    args.num_epochs = 50 # number of epochs for training
-    args.sample_dir = "samples/3/"
-    args.model_dir = "models/3/"
+    args.num_epochs = 100 # number of epochs for training
+    args.loss_function = 'wgan-div'
+    args.sample_dir = "samples/7/"
+    args.model_dir = "models/7/"
     args.feedback_factor = 100 # number of logs to generate per epoch
-    args.checkpoint_factor = 3 # save model per n epochs
+    args.checkpoint_factor = 10 # save model per n epochs
 
     main(args)

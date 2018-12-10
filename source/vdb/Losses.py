@@ -250,6 +250,81 @@ class WGAN_GP(GANLossWithBottleneck):
 
         return loss
 
+class WGAN_div(GANLossWithBottleneck):
+
+    def conditional_dis_loss(self, real_samps, fake_samps, conditional_vectors):
+        pass
+
+    def conditional_gen_loss(self, real_samps, fake_samps, conditional_vectors):
+        pass
+
+    def __init__(self, dis, drift=0.0*0.001, use_gp=True):
+        super().__init__(dis)
+        self.drift = drift
+        self.use_gp = use_gp
+
+    def __gradient_penalty(self, real_samps, fake_samps, k=2, p=6):
+        """
+        private helper for calculating the gradient penalty
+        :param real_samps: real samples
+        :param fake_samps: fake samples
+        :return: gradient_penalty => scalar tensor
+        """
+        from torch.autograd import grad
+
+        batch_size = real_samps.shape[0]
+
+        # generate random epsilon
+        epsilon = th.rand(batch_size, 1, 1, 1).to(fake_samps.device)
+
+        # create the merge of both real and fake samples
+        merged = (epsilon * real_samps) + ((1 - epsilon) * fake_samps)
+
+        # forward pass
+        op, _, _ = self.dis(merged, mean_mode=False)
+
+        # obtain gradient of op wrt. merged
+        gradient = grad(outputs=op, inputs=merged, create_graph=True,
+                        grad_outputs=th.ones_like(op),
+                        retain_graph=True, only_inputs=True)[0]
+
+        # calculate the penalty using these gradients
+        penalty = k * ( (gradient.norm(p=2, dim=1)) ** p ).mean()
+
+        # return the calculated penalty:
+        return penalty
+
+    def dis_loss(self, real_samps, fake_samps, i_c, reg_lambda=10):
+        # define the (Wasserstein) loss
+        fake_out, f_mus, f_sigmas = self.dis(fake_samps, mean_mode=False)
+        real_out, r_mus, r_sigmas = self.dis(real_samps, mean_mode=False)
+
+        loss = (th.mean(fake_out) - th.mean(real_out) + (self.drift * th.mean(real_out ** 2)))
+
+        if self.use_gp:
+            # calculate the WGAN-GP (gradient penalty)
+
+            # .detach() turns off gradients, fake_samps.requires_grad = True
+            fake_samps.requires_grad = True  # turn on gradients for penalty calculation
+            gp = self.__gradient_penalty(real_samps, fake_samps, reg_lambda)
+            loss += gp
+
+        # calculate the bottleneck_loss:
+        bottleneck_loss = self._bottleneck_loss(
+            th.cat((r_mus, f_mus), dim=0),
+            th.cat((r_sigmas, f_sigmas), dim=0), i_c)
+
+        # return the losses:
+        return loss, bottleneck_loss
+
+    def gen_loss(self, _, fake_samps):
+        # calculate the WGAN loss for generator
+
+        # no .detach(), fake_samps.requires_grad = True
+        loss = -th.mean(self.dis(fake_samps, mean_mode=True)[0])
+        
+        return loss
+
 
 class GAN_QP(GANLossWithBottleneck):
 
@@ -259,9 +334,11 @@ class GAN_QP(GANLossWithBottleneck):
     def conditional_gen_loss(self, real_samps, fake_samps, conditional_vectors):
         pass
 
-    def __init__(self, dis, g_use_qp=False):
+    def __init__(self, dis, lam=0.1, g_use_qp=False):
         super().__init__(dis)
         self.g_use_qp = g_use_qp
+        self.lam = lam
+        self.use_EM = True
 
     def dis_loss(self, real_samps, fake_samps, i_c):
         # define the (Wasserstein) loss
@@ -271,7 +348,7 @@ class GAN_QP(GANLossWithBottleneck):
 
         loss = real_out - fake_out
         loss = loss[:,0]
-        norm = 10 * th.mean(th.abs(real_samps - fake_samps), 1)
+        norm = self.lam * th.mean(th.abs(real_samps - fake_samps), 1)
         norm = th.mean(norm, 1)
         norm = th.mean(norm, 1)
         loss = th.mean(-loss + 0.5 *loss ** 2 /norm)
@@ -297,7 +374,12 @@ class GAN_QP(GANLossWithBottleneck):
             norm = th.mean(norm, 1)
             loss = -th.mean(-loss + 0.5 * loss ** 2 / norm)
         else:
-            loss = -th.mean(self.dis(fake_samps, mean_mode=True)[0])
+            if not self.use_EM:
+                loss = -th.mean(self.dis(fake_samps, mean_mode=True)[0])
+            else:
+                fake_samps_old = fake_samps.detach()
+                loss = -th.mean(self.dis(fake_samps, mean_mode=True)[0]) \
+                       + 5 * ((fake_samps - fake_samps_old).norm(2)) ** 2
 
         return loss
 
